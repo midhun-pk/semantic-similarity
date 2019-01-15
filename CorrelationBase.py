@@ -1,8 +1,9 @@
 import numpy as np
+import math
+import re
+
 from sklearn.decomposition import PCA
 from sklearn.decomposition import TruncatedSVD
-import math
-import tensorflow as tf
 
 a = 100
 
@@ -11,12 +12,13 @@ class CorrelationBase:
 	THRESHOLD = 0.70
 	WORD_LENGTH_LIMIT = 2
 	USE_PCA = True
-	METHOD = 'TF-IDF'
+	METHOD = 'TF-IDF' # 'SIF' # 
 	COSINE_SIMILARITY_THRESHOLD = 0.75
 
-	def __init__(self, path):
-		self.__path = path
-		self.__documents = {}
+	def __init__(self, word_vectors, path):
+		self._path = path
+		self._documents = {}
+		self._word_vectors = word_vectors
 
 	def get_path(self):
 		return self.__path
@@ -25,14 +27,14 @@ class CorrelationBase:
 		if text is not None: return len(text) == 0
 		return len(self) == 0
 
-	def remove_extra_space(self, text):
+	def remove_spaces(self, text):
 		text = re.sub(r'[\t\n\r\s]+', ' ', text)
 		return text.strip()
 
 	def get_documents(self, token = ''):
 		if token:
-			return self.__documents[token]
-		return self.__documents
+			return self._documents[token]
+		return self._documents
 	
 	def add_document_frequency(self, id, token):
 		'''
@@ -41,9 +43,9 @@ class CorrelationBase:
 		@param token: String
 		Create a dict of tokens and their corresponding set of sentence ids.
 		'''
-		if token not in self.__documents:
-			self.__documents[token] = set()
-		self.__documents[token].add(id)
+		if token not in self._documents:
+			self._documents[token] = set()
+		self._documents[token].add(id)
 
 	def get_frequency(self, token):
 		pass
@@ -59,7 +61,7 @@ class CorrelationBase:
 		return token_frequency / total_tokens
 	
 	def find_inverse_document_frequency(self, document_frequency, total_documents):
-		return math.log(total_documents/document_frequency, 10)
+		return math.log(total_documents/document_frequency, 10) or 1
 	
 	def get_jaccard_similarity(self, a, b):
 		a = set(a)
@@ -69,7 +71,7 @@ class CorrelationBase:
 
 	def get_vectors(self):
 		sentence_vectors = []
-		word_vector_shape = np.array(list(map(float, word_vectors['cat']))).shape
+		word_vector_shape = np.array(list(map(float, list(self._word_vectors.values())[0]))).shape
 		datas = self.get_items()
 		for key, item in datas.items():
 			sentence_vector = np.zeros(word_vector_shape)
@@ -84,8 +86,9 @@ class CorrelationBase:
 						inverse_document_frequency = self.find_inverse_document_frequency(len(self.get_documents(word)), len(datas))
 						x = term_frequency * inverse_document_frequency
 					else:
+						a = 100
 						x = a / (a + self.get_frequency(word))
-					word_vector = np.array(list(map(float, word_vectors[word])))
+					word_vector = np.array(list(map(float, self._word_vectors[word])))
 					sentence_vector = np.add(sentence_vector, np.multiply(word_vector, x))
 			if len(tokens) > 0:
 				sentence_vector = np.divide(sentence_vector, len(tokens),)
@@ -99,18 +102,13 @@ class CorrelationBase:
 		return sentence_vectors_np
 
 	def get_cosine_similarity(self, r_vectors, t_vectors):
-		r_row_size = len(r_vectors)
-		t_row_size = len(t_vectors)
-		r_col_size = len(r_vectors[0])
-		t_col_size = len(t_vectors[0])
-		r_array = tf.placeholder(tf.float32, [r_row_size, r_col_size])
-		t_array = tf.placeholder(tf.float32, [t_row_size, t_col_size])
-		normed_r_array = tf.nn.l2_normalize(r_array, dim=1)
-		normed_t_array = tf.nn.l2_normalize(t_array, dim=1)
-		cosine_similarity = np.matmul(normed_r_array, tf.transpose(normed_t_array, [1, 0]))
-		with tf.Session() as sess:
-			similarity = sess.run(cosine_similarity, feed_dict={r_array: r_vectors, t_array: t_vectors})
-		return similarity
+		norm = np.linalg.norm(r_vectors, axis=1)[:, np.newaxis]
+		normed_vectors = r_vectors/ norm
+		vectors_transpose = np.transpose(normed_vectors)
+		similarity = np.matmul(normed_vectors, vectors_transpose)
+		np.fill_diagonal(similarity, 0)
+		max_indices = np.argmax(similarity, axis = 1)
+		return similarity, max_indices
 
 	def find_correlation(self):
 		vectors = self.get_vectors()
